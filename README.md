@@ -25,13 +25,6 @@ Esta aplicación web ofrece un conjunto de herramientas interactivas para resolv
 - **Ecuación Matricial**  
   Resuelve ecuaciones matriciales paso a paso.
 
-## 📂 Estructura del proyecto
-
-El proyecto cuenta con un archivo HTML principal que contiene:
-- **Diseño responsivo** usando CSS con gradientes y animaciones.
-- **Interfaz centralizada** con enlaces a cada herramienta.
-- **Estilo minimalista** en blanco y negro para una experiencia clara.
-
 ## 🛠️ Tecnologías utilizadas
 
 - **HTML5** → Estructura de la página  
