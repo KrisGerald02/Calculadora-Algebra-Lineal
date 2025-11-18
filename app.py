@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, url_for
+from flask import Flask, render_template, request, redirect, url_for
+from models.binary_operations import dec_to_bin, get_hex_conversion_table, hex_to_bin_proc, get_signed_c2, floating_point
 import numpy as np
 from scipy import linalg
 from flask import Flask, render_template, request, url_for, session, redirect
@@ -2108,6 +2109,78 @@ def string_to_fraction(matrix_str):
             except:
                 return Fraction(0)
     return matrix_str
+
+
+#aqui binarios
+
+@app.route('/')
+def index():
+    return redirect(url_for('binaries_dashboard'))
+
+@app.route('/binaries')
+def binaries_dashboard():
+    # Renderiza el dashboard principal con todos los formularios
+    hex_table = get_hex_conversion_table()
+    return render_template('binaries_dashboard.html', hex_table=hex_table)
+
+# --- Rutas de Procesamiento de Datos ---
+
+@app.route('/binaries/process_conversion', methods=['POST'])
+def process_conversion():
+    conversion_type = request.form.get('conversion_type')
+    
+    if conversion_type == 'dec_to_bin':
+        decimal = request.form.get('decimal_value')
+        bits = request.form.get('bits_dec_bin')
+        result, procedure_html, result_summary = dec_to_bin(decimal, bits)
+        title = "Decimal a Binario"
+        
+    elif conversion_type == 'hex_to_bin':
+        hex_value = request.form.get('hex_value')
+        result, procedure_html, result_summary = hex_to_bin_proc(hex_value)
+        title = "Hexadecimal a Binario"
+        
+    else:
+        # Manejar otras conversiones (si se añaden más adelante)
+        result, procedure_html, result_summary = None, "<p class='error'>Tipo de conversión no soportado.</p>", "Error"
+        title = "Error de Conversión"
+
+    return render_template('conversion_result.html', 
+                           title=title, 
+                           result=result, 
+                           procedure_html=procedure_html,
+                           result_summary=result_summary)
+
+@app.route('/binaries/process_signed', methods=['POST'])
+def process_signed():
+    decimal = request.form.get('signed_decimal')
+    bits = request.form.get('signed_bits')
+    
+    c2_result, procedure_html, result_summary = get_signed_c2(decimal, bits)
+    
+    return render_template('conversion_result.html', 
+                           title="Análisis de Números Enteros", 
+                           result=c2_result, 
+                           procedure_html=procedure_html,
+                           result_summary=result_summary)
+
+@app.route('/binaries/process_floating_point', methods=['POST'])
+def process_floating_point():
+    decimal = request.form.get('fp_decimal')
+    bits_s = request.form.get('fp_sign_bits')
+    bits_e = request.form.get('fp_exponent_bits')
+    bits_m = request.form.get('fp_mantissa_bits')
+    
+    fp_result, procedure_html, result_summary = floating_point(decimal, bits_s, bits_e, bits_m)
+    
+    # Nota: Usamos una plantilla específica para flotante si necesitamos layout diferente
+    # Por ahora, usamos la genérica, pero la llamamos con un título específico.
+    return render_template('floating_point_result.html', 
+                           title="Representación Punto Flotante (Base 2)", 
+                           result=fp_result, 
+                           procedure_html=procedure_html,
+                           result_summary=result_summary)
+#fin bin
 
 if __name__ == "__main__":
     app.run(debug=True)
