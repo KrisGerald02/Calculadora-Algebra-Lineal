@@ -1,6 +1,11 @@
 import math
+#notacion cientifica y tmb n decimales, paso a paso y mostrar la formula
+#funciones exponenciales y logaritmicas y trigonometricas polinomiales4
+#propagacion de errores derivando. integrales
+#graficas 
+#log comun
 
-# Función auxiliar para convertir a binario con procedimiento de divisiones
+# Función auxiliar para convertir a binario con procedimiento de divisiones+
 def _dec_to_bin_procedure(decimal, bits):
     """Convierte un decimal a binario (parte entera) con procedimiento detallado."""
     decimal = abs(decimal)
@@ -82,7 +87,7 @@ def hex_to_bin_proc(hex_str):
     binario_completo = ""
     for char in hex_str:
         try:
-            dec_val = int(char, 16)
+            dec_val = float(char, 16)
             bin_val = f"{dec_val:04b}"
             procedimiento += f"<li>Dígito Hex: <code>{char}</code> &rarr; Binario: <code>{bin_val}</code></li>"
             binario_completo += bin_val
