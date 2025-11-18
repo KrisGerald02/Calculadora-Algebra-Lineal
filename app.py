@@ -1,7 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for
 from models.binary_operations import dec_to_bin, get_hex_conversion_table, hex_to_bin_proc, get_signed_c2, floating_point
 import numpy as np
-from scipy import linalg
+#from scipy import linalg
 from flask import Flask, render_template, request, url_for, session, redirect
 from models.equations_solver import Gauss
 from models.properties import Properties
