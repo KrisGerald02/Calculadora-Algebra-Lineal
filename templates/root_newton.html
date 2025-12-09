@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Newton-Raphson - Morado</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async
+        src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+</head>
+<body id="root-newton">
+
+    <!-- Enlace volver al menú -->
+    <a href="{{ url_for('home') }}" class="back-link">← Volver al menú principal</a>
+
+    <div class="main-card">
+        <h1>Método de Newton-Raphson</h1>
+        
+
+        <!-- Campo función solo lectura -->
+        <input type="text" name="funcion" id="funcion" readonly form="newton-form"
+               value="{{ request.form.funcion or '' }}"
+               placeholder="Haz clic en los botones para construir la función">
+
+        <!-- Teclado matemático -->
+        <div class="teclado">
+            <button type="button" class="btn-fun" onclick="add('sin(')">sin(</button>
+            <button type="button" class="btn-fun" onclick="add('cos(')">cos(</button>
+            <button type="button" class="btn-fun" onclick="add('tan(')">tan(</button>
+            <button type="button" class="btn-fun" onclick="add('ln(')">ln(</button>
+            <button type="button" class="btn-fun" onclick="add('exp(')">exp(</button>
+            <button type="button" class="btn-fun" onclick="add('sqrt(')">√(</button>
+
+            <button type="button" class="btn-op" onclick="add('(')">(</button>
+            <button type="button" class="btn-op" onclick="add(')')">)</button>
+            <button type="button" class="btn-op" onclick="add('**')">xⁿ</button>
+            <button type="button" class="btn-op" onclick="add('/')">÷</button>
+            <button type="button" class="btn-op" onclick="add('*')">×</button>
+            <button type="button" class="btn-clear" onclick="clearAll()">Limpiar</button>
+
+            <button type="button" class="btn-teclado" onclick="add('7')">7</button>
+            <button type="button" class="btn-teclado" onclick="add('8')">8</button>
+            <button type="button" class="btn-teclado" onclick="add('9')">9</button>
+            <button type="button" class="btn-op" onclick="add('-')">−</button>
+            <button type="button" class="btn-op" onclick="add('+')">+</button>
+            <button type="button" class="btn-teclado" onclick="add('x')">x</button>
+
+            <button type="button" class="btn-teclado" onclick="add('4')">4</button>
+            <button type="button" class="btn-teclado" onclick="add('5')">5</button>
+            <button type="button" class="btn-teclado" onclick="add('6')">6</button>
+            <button type="button" class="btn-teclado" onclick="add('1')">1</button>
+            <button type="button" class="btn-teclado" onclick="add('2')">2</button>
+            <button type="button" class="btn-teclado" onclick="add('3')">3</button>
+
+            <button type="button" class="btn-teclado" onclick="add('0')">0</button>
+            <button type="button" class="btn-teclado" onclick="add('.')">.</button>
+            <button type="button" class="btn-teclado" onclick="add('pi')">π</button>
+            <button type="button" class="btn-teclado" onclick="add('E')">e</button>
+            <button type="button" class="btn-teclado" onclick="add('00')">00</button>
+            <button type="button" class="btn-clear" onclick="backspace()">←</button>
+        </div>
+
+        <form id="newton-form" method="POST">
+            <div class="params">
+                <div class="param-group">
+                    <label>Valor inicial x₀</label>
+                    <input type="number" step="any" name="x0" value="1.5" required>
+                </div>
+                <div class="param-group">
+                    <label>Tolerancia</label>
+                    <input type="number" step="any" name="tol" value="1e-10">
+                </div>
+                <div class="param-group">
+                    <label>Máx. iteraciones</label>
+                    <input type="number" name="max_iter" value="50">
+                </div>
+            </div>
+            <button type="submit" class="submit-btn">Calcular Raíz con Newton-Raphson</button>
+        </form>
+
+        {% if resultado %}
+        <div class="result-box {{ 'success' if resultado.get('raiz') else 'danger' }}">
+            {% if resultado.get('raiz') %}
+                <h3>Raíz: x ≈ {{ "%.12f" % resultado.raiz }}</h3>
+                <p><strong>f(raíz) = {{ "%.3e" % resultado.f_raiz }}</strong></p>
+                <p>Iteraciones: <strong>{{ resultado.iteraciones }}</strong></p>
+            {% else %}
+                <h3>Error: {{ resultado.mensaje or resultado.error }}</h3>
+            {% endif %}
+
+            {% if resultado.historia %}
+                <h4>Iteraciones</h4>
+                <table>
+                    <tr><th>n</th><th>xₙ</th><th>f(xₙ)</th><th>f'(xₙ)</th><th>xₙ₊₁</th><th>Error</th></tr>
+                    {% for fila in resultado.historia %}
+                    <tr>
+                        <td>{{ fila.n }}</td>
+                        <td>{{ "%.10f" % fila.xk }}</td>
+                        <td>{{ "%.3e" % fila["f(xk)"] }}</td>
+                        <td>{{ "%.3e" % fila["f'(xk)"] }}</td>
+                        <td>{{ "%.10f" % fila["xk+1"] }}</td>
+                        <td>{{ "%.3e" % (fila.error if fila.error is not none else 0) }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+
+<script>
+function add(texto) {
+    document.getElementById('funcion').value += texto;
+}
+function clearAll() {
+    document.getElementById('funcion').value = '';
+}
+function backspace() {
+    const input = document.getElementById('funcion');
+    input.value = input.value.slice(0, -1);
+}
+</script>
+
+</body>
+</html>

@@ -1,10 +1,13 @@
 from flask import Flask, render_template, request, redirect, url_for
+import re
 from models.binary_operations import dec_to_bin, get_hex_conversion_table, hex_to_bin_proc, get_signed_c2, floating_point
 import numpy as np
+from models.derivatives import procesar_funcion
 #from scipy import linalg
 from flask import Flask, render_template, request, url_for, session, redirect
 from models.equations_solver import Gauss
 from models.properties import Properties
+from sympy import sympify, lambdify, symbols
 from models.matrix_equation import MatrixEquation
 from models.arithmetic_operations import ArOperations
 from models.determinant import calculate_determinant  # <-- CORRECTO
@@ -15,8 +18,14 @@ from models.numerical_errors import NumericalErrors
 from models.floating_point_demo import FloatingPointDemo
 from models.numpy_workshop import NumpyWorkshop
 from models.error_analysis import ErrorAnalysis
+from models.root_finding import RootFinding, parse_function
 from copy import deepcopy
 from types import SimpleNamespace
+from models.newton_raphson import newton_raphson
+from models.secant import secante
+import base64 
+from io import BytesIO
+import matplotlib.pyplot as plt
 
 app = Flask(__name__)
 #cod anterior
@@ -447,6 +456,31 @@ def verify_identity(kind, ctx):
                 "valid": matrices_equal(L, R), "error": None
             }
 
+        if kind == "t_scalar_sum":              # (r(A+B))^T = r(A^T + B^T)
+            AB, _ = ArOperations.addTwoMatrixWithSteps(A, B)
+            rAB, _ = ArOperations.multiplyMatrixByScalarWithSteps(AB, r)
+            L, _ = ArOperations.transposeMatrixWithSteps(rAB)
+            lhs_steps += [
+                _snap("A + B", ("A", A), ("B", B), ("A+B", AB)),
+                _snap(f"{_fmt_num(r)}·(A+B)", ("A+B", AB), ("r(A+B)", rAB)),
+                _snap("(r(A+B))^T", ("r(A+B)", rAB), ("LHS", L)),
+            ]
+
+            AT, _ = ArOperations.transposeMatrixWithSteps(A)
+            BT, _ = ArOperations.transposeMatrixWithSteps(B)
+            AT_BT, _ = ArOperations.addTwoMatrixWithSteps(AT, BT)
+            R, _ = ArOperations.multiplyMatrixByScalarWithSteps(AT_BT, r)
+            rhs_steps += [
+                _snap("A^T y B^T", ("A^T", AT), ("B^T", BT)),
+                _snap("A^T + B^T", ("A^T", AT), ("B^T", BT), ("A^T+B^T", AT_BT)),
+                _snap(f"{_fmt_num(r)}·(A^T+B^T)", ("A^T+B^T", AT_BT), ("RHS", R)),
+            ]
+            return {
+                "lhs_steps": lhs_steps, "rhs_steps": rhs_steps,
+                "lhs_result": as_text_matrix(L), "rhs_result": as_text_matrix(R),
+                "valid": matrices_equal(L, R), "error": None
+            }
+
         if kind == "t_scalar":                  # (rA)^T = r A^T
             rA, _ = ArOperations.multiplyMatrixByScalarWithSteps(A, r)
             L,  _ = ArOperations.transposeMatrixWithSteps(rA)
@@ -620,6 +654,11 @@ PROP_META = {
         "needs": {"A", "B"},
         "check": lambda d: d["A"] == d["B"]
     },
+    "t_scalar_sum": {
+        "label": "(r(A + B))^T = r(A^T + B^T)",
+        "needs": {"A", "B", "r"},
+        "check": lambda d: d["A"] == d["B"]
+    },
     "t_scalar": {
         "label": "(rA)^T = rA^T",
         "needs": {"A", "r"},
@@ -713,7 +752,7 @@ def solve_linear_system():
     try:
         A = np.array(coefficients, dtype=float)
         b = np.array(results, dtype=float)
-        solution = np.linalg.solve(A, b)
+        solution = np.linalg.solve(A, b).tolist()
         
         return render_template(
             "sistema_ecuaciones.html",
@@ -1319,6 +1358,90 @@ def matrix_multiply_solve():
         return render_template("matrix_multiply.html", step=2, rows_a=rows_a, cols_a=cols_a, rows_b=rows_b, cols_b=cols_b, matrix_a=matrix_a, matrix_b=matrix_b, error=f"Error: Ingrese valores válidos (admite fracciones tipo 3/2). {str(e)}")
     except Exception as e:
         return render_template("matrix_multiply.html", step=2, rows_a=rows_a, cols_a=cols_a, rows_b=rows_b, cols_b=cols_b, matrix_a=matrix_a, matrix_b=matrix_b, error=f"Error al realizar la multiplicación: {str(e)}")
+
+@app.route("/matrix_chain", methods=["GET", "POST"])
+def matrix_chain():
+    if request.method == "GET":
+        return render_template("matrix_chain.html", step=1)
+
+    stage = request.form.get("stage", "1")
+    try:
+        if stage == "1":
+            mode = request.form.get("mode", "right")
+            ar = int(request.form.get("ar", "2"))
+            ac = int(request.form.get("ac", "2"))
+            br = int(request.form.get("br", str(ar)))
+            bc = int(request.form.get("bc", str(ac)))
+            cr = int(request.form.get("cr", "2"))
+            cc = int(request.form.get("cc", "2"))
+            k_raw = request.form.get("k", "1")
+
+            for v in (ar, ac, br, bc, cr, cc):
+                if not (1 <= v <= 10):
+                    raise ValueError("Las dimensiones deben estar entre 1 y 10.")
+            if ar != br or ac != bc:
+                raise ValueError("A y B deben tener las mismas dimensiones.")
+            if mode == "right" and ac != cr:
+                raise ValueError("Para (A + kB)·C se requiere que cols(A)=rows(C).")
+            if mode == "left" and cc != ar:
+                raise ValueError("Para C·(A + kB) se requiere que cols(C)=rows(A).")
+
+            return render_template(
+                "matrix_chain.html",
+                step=2,
+                mode=mode,
+                ar=ar, ac=ac, br=br, bc=bc, cr=cr, cc=cc,
+                k=k_raw,
+            )
+
+        if stage == "2":
+            mode = request.form.get("mode", "right")
+            ar = int(request.form["ar"]); ac = int(request.form["ac"])
+            br = int(request.form["br"]); bc = int(request.form["bc"])
+            cr = int(request.form["cr"]); cc = int(request.form["cc"])
+            k = safe_fraction(request.form.get("k", "1"))
+
+            A = [[safe_fraction(request.form.get(f"A_{i}_{j}", 0)) for j in range(ac)] for i in range(ar)]
+            B = [[safe_fraction(request.form.get(f"B_{i}_{j}", 0)) for j in range(bc)] for i in range(br)]
+            C = [[safe_fraction(request.form.get(f"C_{i}_{j}", 0)) for j in range(cc)] for i in range(cr)]
+
+            if ar != br or ac != bc:
+                raise ValueError("A y B deben tener las mismas dimensiones.")
+            if mode == "right" and ac != cr:
+                raise ValueError("Para (A + kB)·C se requiere que cols(A)=rows(C).")
+            if mode == "left" and cc != ar:
+                raise ValueError("Para C·(A + kB) se requiere que cols(C)=rows(A).")
+
+            steps = []
+            kB, _ = ArOperations.multiplyMatrixByScalarWithSteps(B, k)
+            steps.append(_snap(f"{_fmt_num(k)}·B", ("B", B), (f"{_fmt_num(k)}B", kB)))
+
+            A_plus_kB, _ = ArOperations.addTwoMatrixWithSteps(A, kB)
+            steps.append(_snap("A + kB", ("A", A), (f"{_fmt_num(k)}B", kB), ("A+kB", A_plus_kB)))
+
+            if mode == "right":
+                result, _ = ArOperations.multiplyTwoMatrixWithSteps(A_plus_kB, C)
+                steps.append(_snap("(A+kB)·C", ("A+kB", A_plus_kB), ("C", C), ("Resultado", result)))
+            else:
+                result, _ = ArOperations.multiplyTwoMatrixWithSteps(C, A_plus_kB)
+                steps.append(_snap("C·(A+kB)", ("C", C), ("A+kB", A_plus_kB), ("Resultado", result)))
+
+            session["current_matrix"] = fraction_to_string(result)
+            session["previous_op"] = "chain"
+
+            return render_template(
+                "matrix_chain.html",
+                step=3,
+                mode=mode,
+                ar=ar, ac=ac, br=br, bc=bc, cr=cr, cc=cc,
+                k=k,
+                A=A, B=B, C=C,
+                combo=A_plus_kB,
+                result=result,
+                steps=steps,
+            )
+    except Exception as e:
+        return render_template("matrix_chain.html", step=1, error=str(e))
 
 #ya
 @app.route('/matrix_transpose', methods=['GET', 'POST'])
@@ -2089,6 +2212,100 @@ def error_analysis():
     )
 
 
+@app.route("/root_finding", methods=["GET", "POST"])
+def root_finding():
+    error = None
+    iterations = []
+    result = None
+
+    method = "biseccion"
+    func_input = "x**3 + 4*x**2 - 10"
+    a_str = "1"
+    b_str = "2"
+    tol_str = "0.0001"
+    method_label = "Método de Bisección"
+    xr_label = "xm (punto medio)"
+
+    def _pretty_func(expr: str) -> str:
+        # Representación simple para mostrar en pantalla (texto plano).
+        return expr.replace("**", "^").replace("*", "·")
+
+    def _latex_func(expr: str) -> str:
+        """
+        Conversión básica a una sintaxis amigable para MathJax.
+        - **n -> ^{n}
+        - *   -> espacio (multiplicación implícita)
+        """
+        s = expr.strip()
+        s = s.replace(" ", "")
+        s = s.replace("**", "^")
+        # potencia ^n -> ^{n}
+        s = re.sub(r"\^(\d+)", r"^{\1}", s)
+        # multiplicación implícita
+        s = s.replace("*", " ")
+        return s
+
+    if request.method == "POST":
+        method = request.form.get("method", "biseccion")
+        func_input = request.form.get("func", func_input).strip()
+        a_str = request.form.get("a", a_str).strip()
+        b_str = request.form.get("b", b_str).strip()
+        tol_str = request.form.get("error_tol", tol_str).strip()
+
+        try:
+            a = float(a_str)
+            b = float(b_str)
+            error_tol = float(tol_str)
+            if error_tol <= 0:
+                raise ValueError("El error deseado debe ser un número positivo.")
+
+            func = parse_function(func_input)
+
+            if method == "falsa_posicion":
+                iterations = RootFinding.falsa_posicion(func, a, b, error_tol)
+                method_label = "Regla Falsa (Falsa Posición)"
+                xr_label = "xr (regla falsa)"
+            else:
+                iterations = RootFinding.biseccion(func, a, b, error_tol)
+                method = "biseccion"
+                method_label = "Método de Bisección"
+                xr_label = "xm (punto medio)"
+
+            if iterations:
+                last = iterations[-1]
+                result = {
+                    "raiz": last.xr,
+                    "iteraciones": len(iterations),
+                    "intervalo": (last.a, last.b),
+                    "error_final": last.error_rel_pct,
+                    "method_label": method_label,
+                    "xr_label": xr_label,
+                }
+        except Exception as e:
+            error = str(e)
+            iterations = []
+            result = None
+    else:
+        method_label = "Método de Bisección"
+        xr_label = "xm (punto medio)"
+
+    return render_template(
+        "root_finding.html",
+        error=error,
+        method=method,
+        method_label=method_label,
+        func_input=func_input,
+        func_pretty=_pretty_func(func_input),
+        a_str=a_str,
+        b_str=b_str,
+        tol_str=tol_str,
+        iterations=iterations,
+        result=result,
+        xr_label=xr_label,
+        func_latex=_latex_func(func_input),
+    )
+
+
 
 def fraction_to_string(matrix):
     if isinstance(matrix, list):
@@ -2192,7 +2409,213 @@ def process_floating_point():
                            result=fp_result, 
                            procedure_html=procedure_html,
                            result_summary=result_summary)
-#fin bin
+
+def generar_grafica(f_num, a=None, b=None, raiz=None, puntos_extra=None, titulo="f(x)"):
+    """
+    Genera una gráfica bonita de la función con la raíz marcada.
+    
+    Parámetros:
+    - f_num: función evaluable (devuelta por lambdify)
+    - a, b: límites del eje x (si None, se calculan automáticamente)
+    - raiz: valor de la raíz para marcar en rojo
+    - puntos_extra: lista de tuplas (x, label) para marcar puntos adicionales
+    - titulo: título de la gráfica
+    """
+    if a is None or b is None:
+        centro = raiz if raiz is not None else 0
+        a, b = centro - 10, centro + 10
+
+    x_vals = np.linspace(a, b, 800)
+    y_vals = []
+    for x in x_vals:
+        try:
+            y_vals.append(f_num(x))
+        except:
+            y_vals.append(np.nan)
+
+    plt.figure(figsize=(12, 7))
+    plt.plot(x_vals, y_vals, label="f(x)", color="#3498db", linewidth=3)
+    plt.axhline(0, color='black', linewidth=1.2, alpha=0.7)
+    plt.axvline(0, color='black', linewidth=1.2, alpha=0.7)
+    plt.grid(True, alpha=0.4, linestyle='--')
+
+    # Marcar la raíz si existe
+    if raiz is not None:
+        try:
+            y_raiz = f_num(raiz)
+            plt.plot(raiz, y_raiz, 'ro', markersize=12, label=f"Raíz ≈ {raiz:.10f}")
+            plt.annotate(f"Raíz: {raiz:.8f}", 
+                        xy=(raiz, y_raiz), xytext=(raiz, y_raiz + max(y_vals)/10),
+                        arrowprops=dict(arrowstyle='->', color='red', lw=2),
+                        fontsize=12, color='red', ha='center')
+        except:
+            pass
+
+    # Puntos extra (útil para Secante, Bisección, etc.)
+    if puntos_extra:
+        for px, label, color in puntos_extra:
+            try:
+                py = f_num(px)
+                plt.plot(px, py, 'o', color=color, markersize=10)
+                plt.text(px, py, f" {label}", fontsize=11, color=color, weight='bold')
+            except:
+                pass
+
+    plt.title(titulo, fontsize=18, pad=20, weight='bold')
+    plt.xlabel("x", fontsize=14)
+    plt.ylabel("f(x)", fontsize=14)
+    plt.legend(fontsize=12)
+    plt.tight_layout()
+
+    # Convertir a base64
+    buf = BytesIO()
+    plt.savefig(buf, format='png', dpi=130, facecolor='white')
+    buf.seek(0)
+    img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    plt.close()
+    return f"data:image/png;base64,{img_base64}"
+
+@app.route('/derivadas', methods=['GET', 'POST'])
+def derivadas():
+    resultado = None
+    error = None
+    funcion_str = ''
+
+    if request.method == 'POST':
+        funcion_str = request.form.get('funcion', '').strip()
+        try:
+            resultado = procesar_funcion(funcion_str)
+
+            # Evaluación de ejemplo en x=2
+            f_num_val = resultado
+            df_num_val = resultado
+
+            # Guardamos los valores para la plantilla
+            resultado.update({
+                'f_num_val': f_num_val,
+                'df_num_val': df_num_val
+            })
+        except Exception as e:
+            error = f"Función inválida: {e}"
+
+    return render_template('derivates.html',
+                           resultado=resultado,
+                           error=error,
+                           funcion_str=funcion_str)
+
+
+
+@app.route('/newton', methods=['GET', 'POST'])
+def newton():
+    resultado = None
+    grafica = None
+    funcion_str = ""
+
+    if request.method == 'POST':
+        funcion_str = request.form.get('funcion', '').strip()
+        if not funcion_str:
+            resultado = {'error': 'Por favor construye una función usando los botones.'}
+        else:
+            try:
+                x0 = float(request.form['x0'])
+                tol = float(request.form['tol'])
+                max_iter = int(request.form['max_iter'])
+
+                # Procesar la función
+                f = procesar_funcion(funcion_str)
+
+                # Ejecutar Newton-Raphson
+                from models.newton_raphson import newton_raphson
+                res = newton_raphson(f["num"], f["df_num"], x0, tol, max_iter)
+
+                # Generar gráfica
+                centro = res.get("raiz", x0)
+                grafica = generar_grafica(
+                    f_num=f["num"],
+                    a=centro-8, b=centro+8,
+                    raiz=res.get("raiz"),
+                    titulo=f"Newton-Raphson → f(x) = {funcion_str}"
+                )
+
+                resultado = {
+                    "raiz": res.get("raiz"),
+                    "f_raiz": res.get("f_raiz"),
+                    "iteraciones": res.get("iteraciones"),
+                    "historia": res.get("historia"),
+                    "convergio": res.get("convergio", False),
+                    "error": res.get("error"),
+                    "mensaje": res.get("mensaje")
+                }
+
+            except Exception as e:
+                resultado = {'error': f'Error en cálculo: {str(e)}'}
+
+    return render_template('root_newton.html',
+                           resultado=resultado,
+                           grafica=grafica,
+                           funcion_str=funcion_str)
+x = symbols('x')
+
+@app.route('/secante', methods=['GET', 'POST'])
+def secante_route():
+    resultado = None
+    grafica = None
+    funcion_str = ""
+
+    if request.method == 'POST':
+        funcion_str = request.form.get('funcion', '').strip()
+
+        if not funcion_str:
+            resultado = {'error': 'Por favor construye una función usando los botones.'}
+        else:
+            try:
+                x0 = float(request.form['x0'])
+                x1 = float(request.form['x1'])
+                tol = float(request.form['tol'])
+                max_iter = int(request.form['max_iter'])
+
+                # USAMOS LA FUNCIÓN SEGURA que ya arreglamos
+                f = procesar_funcion(funcion_str)
+
+                res = secante(f["num"], x0, x1, tol, max_iter)
+
+                # Generamos gráfica bonita
+                centro = res.get("raiz")
+                a = min(x0, x1) - 5
+                b = max(x0, x1) + 5
+                if centro is not None:
+                    a = min(a, centro - 4)
+                    b = max(b, centro + 4)
+
+                grafica = generar_grafica(
+                    f_num=f["num"],
+                    a=a, b=b,
+                    raiz=res.get("raiz"),
+                    puntos_extra=[
+                        (x0, "x₀", "orange"),
+                        (x1, "x₁", "purple")
+                    ],
+                    titulo=f"Método de la Secante → f(x) = {funcion_str}"
+                )
+
+                resultado = {
+                    "raiz": res.get("raiz"),
+                    "f_raiz": res.get("f_raiz"),
+                    "iteraciones": res.get("iteraciones"),
+                    "historia": res.get("historia"),
+                    "convergio": res.get("convergio", False),
+                    "error": res.get("error"),
+                    "mensaje": res.get("mensaje")
+                }
+
+            except Exception as e:
+                resultado = {'error': f'Error: {str(e)}'}
+
+    return render_template('root_secant.html',
+                           resultado=resultado,
+                           grafica=grafica,
+                           funcion_str=funcion_str)
+
 
 if __name__ == "__main__":
     app.run(debug=True)
